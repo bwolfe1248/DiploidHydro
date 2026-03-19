@@ -14,9 +14,9 @@
 
 #define LEVEL_1 16
 #define LEVEL_2 17
-#define LEVEL_3 18
-#define LEVEL_4 19
-#define LEVEL_5 23
+#define LEVEL_3 25
+#define LEVEL_4 26
+#define LEVEL_5 27
 
 //Sensors 
 Adafruit_ADS1115 ads;
