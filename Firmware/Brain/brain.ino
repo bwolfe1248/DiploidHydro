@@ -8,6 +8,7 @@
 #include <Adafruit_ADS1X15.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <Preferences.h>
 
 //Pin Def
 #define ONE_WIRE_BUS 4     // DS18B20 data pin
@@ -18,15 +19,101 @@
 #define LEVEL_4 26
 #define LEVEL_5 27
 
+//pH Constants 
+const float CONST_DEFAULT_PH_V7 = 1.528;    // voltage at pH 7.0
+const float CONST_DEFAULT_PH_V4 = 2.048;    // voltage at pH 4.0
+const float CONST_DEFAULT_PH_SLOPE = (7.0 - 4.0) / (CONST_DEFAULT_PH_V7 - CONST_DEFAULT_PH_V4);
+
+//Runtime Calibration Values
+float calV7 = CONST_DEFAULT_PH_V7;   // loaded from storage on boot
+float calV4 = CONST_DEFAULT_PH_V4;   // loaded from storage on boot
+float calSlope = CONST_DEFAULT_PH_SLOPE;  // recalculated after load
+
+
+// TDS calibration
+const float TDS_CAL_V0 = 0.006;   // voltage at 0 ppm (distilled water)
+const float TDS_CAL_TEMP = 23.37; // temperature at calibration
+
 //Sensors 
 Adafruit_ADS1115 ads;
 OneWire oneWire(ONE_WIRE_BUS);
-DallasTemperature tempSensor(&oneWire);
+DallasTemperature tempSensor(&oneWire); 
+Preferences preferences;
+
+float voltageToPH(float voltage) {
+  return 7.0 + (calV7 - voltage) * calSlope;
+}
+
+//allows for calibration updates
+void saveCalibration(float v7, float v4) {
+  preferences.begin("diploidhydro", false);
+  preferences.putFloat("phCalV7", v7);
+  preferences.putFloat("phCalV4", v4);
+  preferences.end();
+  
+  calV7 = v7;
+  calV4 = v4;
+  calSlope = (7.0 - 4.0) / (calV7 - calV4);
+  
+  Serial.println("Calibration saved.");
+  Serial.print("New V7: "); Serial.println(calV7, 3);
+  Serial.print("New V4: "); Serial.println(calV4, 3);
+  Serial.print("New slope: "); Serial.println(calSlope, 3);
+}
+
+//listens for calibration command
+void checkSerialCommands() {
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    
+    if (cmd == "cal7") {
+      int16_t raw = ads.readADC_SingleEnded(0);
+      float voltage = ads.computeVolts(raw);
+      saveCalibration(voltage, calV4);
+      Serial.print("Calibrated pH 7.0 at: "); Serial.println(voltage, 3);
+    }
+    else if (cmd == "cal4") {
+      int16_t raw = ads.readADC_SingleEnded(0);
+      float voltage = ads.computeVolts(raw);
+      saveCalibration(calV7, voltage);
+      Serial.print("Calibrated pH 4.0 at: "); Serial.println(voltage, 3);
+    }
+    else if (cmd == "resetcal") {
+      preferences.begin("diploidhydro", false);
+      preferences.remove("phCalV7");
+      preferences.remove("phCalV4");
+      preferences.end();
+  
+      calV7 = CONST_DEFAULT_PH_V7;
+      calV4 = CONST_DEFAULT_PH_V4;
+      calSlope = CONST_DEFAULT_PH_SLOPE;
+      
+      Serial.println("Calibration reset to defaults.");
+      Serial.print("V7: "); Serial.println(calV7, 3);
+      Serial.print("V4: "); Serial.println(calV4, 3);
+      Serial.print("Slope: "); Serial.println(calSlope, 3);
+    }
+  }
+}
 
 //init sensors and GPIO 
 void setup() {
   Serial.begin(9600);
   delay(1000);
+  
+// Load calibration from storage
+  preferences.begin("diploidhydro", false);
+  calV7 = preferences.getFloat("phCalV7", CONST_DEFAULT_PH_V7);
+  calV4 = preferences.getFloat("phCalV4", CONST_DEFAULT_PH_V4);
+  preferences.end();
+
+  // Recalculate slope from loaded values
+  calSlope = (7.0 - 4.0) / (calV7 - calV4);
+
+  Serial.print("pH cal V7: "); Serial.println(calV7, 3);
+  Serial.print("pH cal V4: "); Serial.println(calV4, 3);
+  Serial.print("pH slope:  "); Serial.println(calSlope, 3);
 
   //Initialize I2C
   Wire.begin(21, 22);
@@ -53,8 +140,10 @@ void setup() {
   Serial.println("────────────────────────────────────────");
 }
 
-//Loop 
+
 void loop() {
+  //check for commands
+  checkSerialCommands();
 
   //pH Reading 
   int16_t phRaw = ads.readADC_SingleEnded(0);
@@ -77,7 +166,9 @@ void loop() {
 
   //Print to Serial 
   Serial.println("────────────────────────────────────────");
-  Serial.print("pH Voltage:    "); Serial.print(phVoltage, 3); Serial.println("V");
+  float pH = voltageToPH(phVoltage);
+  Serial.print("pH:            "); Serial.print(pH, 2);
+  Serial.print("  ("); Serial.print(phVoltage, 3); Serial.println("V)");
   Serial.print("TDS Voltage:   "); Serial.print(tdsVoltage, 3); Serial.println("V");
   Serial.print("Temperature:   "); Serial.print(tempC, 2); Serial.println("°C");
   Serial.println("── Level Sensors ────────────────────────");
