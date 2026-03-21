@@ -20,9 +20,10 @@
 #define LEVEL_5 27
 
 //pH Constants 
-const float CONST_DEFAULT_PH_V7 = 1.528;    // voltage at pH 7.0
-const float CONST_DEFAULT_PH_V4 = 2.048;    // voltage at pH 4.0
-const float CONST_DEFAULT_PH_SLOPE = (7.0 - 4.0) / (CONST_DEFAULT_PH_V7 - CONST_DEFAULT_PH_V4);
+const float CONST_DEFAULT_PH_V7 = 1.526;    // voltage at pH 7.0
+const float CONST_DEFAULT_PH_V4 = 2.042;    // voltage at pH 4.0
+const float CONST_DEFAULT_PH_SLOPE = 3.0 / (CONST_DEFAULT_PH_V4 - CONST_DEFAULT_PH_V7);
+bool plotMode = false;
 
 //Runtime Calibration Values
 float calV7 = CONST_DEFAULT_PH_V7;   // loaded from storage on boot
@@ -41,7 +42,7 @@ DallasTemperature tempSensor(&oneWire);
 Preferences preferences;
 
 float voltageToPH(float voltage) {
-  return 7.0 + (calV7 - voltage) * calSlope;
+  return 4.0 + (CONST_DEFAULT_PH_V4 - voltage) * (3.0 / (CONST_DEFAULT_PH_V4 - CONST_DEFAULT_PH_V7));
 }
 
 //allows for calibration updates
@@ -93,6 +94,14 @@ void checkSerialCommands() {
       Serial.print("V7: "); Serial.println(calV7, 3);
       Serial.print("V4: "); Serial.println(calV4, 3);
       Serial.print("Slope: "); Serial.println(calSlope, 3);
+    }
+    else if (cmd == "ploton") {
+      plotMode = true;
+      Serial.println("Plot mode ON");
+    }
+    else if (cmd == "plotoff") {
+      plotMode = false;
+      Serial.println("Plot mode OFF");
     }
   }
 }
@@ -164,19 +173,32 @@ void loop() {
   bool level4 = digitalRead(LEVEL_4);
   bool level5 = digitalRead(LEVEL_5);
 
-  //Print to Serial 
-  Serial.println("────────────────────────────────────────");
+  //Print to Serial
   float pH = voltageToPH(phVoltage);
-  Serial.print("pH:            "); Serial.print(pH, 2);
-  Serial.print("  ("); Serial.print(phVoltage, 3); Serial.println("V)");
-  Serial.print("TDS Voltage:   "); Serial.print(tdsVoltage, 3); Serial.println("V");
-  Serial.print("Temperature:   "); Serial.print(tempC, 2); Serial.println("°C");
-  Serial.println("── Level Sensors ────────────────────────");
-  Serial.print("L1: "); Serial.print(level1 ? "DRY" : "WET");
-  Serial.print("  L2: "); Serial.print(level2 ? "DRY" : "WET");
-  Serial.print("  L3: "); Serial.print(level3 ? "DRY" : "WET");
-  Serial.print("  L4: "); Serial.print(level4 ? "DRY" : "WET");
-  Serial.print("  L5: "); Serial.println(level5 ? "DRY" : "WET");
 
+  if (!plotMode) {
+    Serial.println("────────────────────────────────────────");
+    Serial.print("pH:            "); Serial.print(pH, 2);
+    Serial.print("  ("); Serial.print(phVoltage, 3); Serial.println("V)");
+    Serial.print("TDS Voltage:   "); Serial.print(tdsVoltage, 3); Serial.println("V");
+    Serial.print("Temperature:   "); Serial.print(tempC, 2); Serial.println("°C");
+    Serial.println("── Level Sensors ────────────────────────");
+    Serial.print("L1: "); Serial.print(level1 ? "DRY" : "WET");
+    Serial.print("  L2: "); Serial.print(level2 ? "DRY" : "WET");
+    Serial.print("  L3: "); Serial.print(level3 ? "DRY" : "WET");
+    Serial.print("  L4: "); Serial.print(level4 ? "DRY" : "WET");
+    Serial.print("  L5: "); Serial.println(level5 ? "DRY" : "WET");
+  }
+
+  if (plotMode) {
+    Serial.print("pH:"); Serial.print(pH, 2);
+    Serial.print(",TDS:"); Serial.print(tdsVoltage, 3);
+    Serial.print(",Temp:"); Serial.print(tempC, 2);
+    Serial.print(",L1:"); Serial.print(!level1 ? 1 : 0);
+    Serial.print(",L2:"); Serial.print(!level2 ? 1 : 0);
+    Serial.print(",L3:"); Serial.print(!level3 ? 1 : 0);
+    Serial.print(",L4:"); Serial.print(!level4 ? 1 : 0);
+    Serial.print(",L5:"); Serial.println(!level5 ? 1 : 0);
+  }
   delay(2000);
 }
