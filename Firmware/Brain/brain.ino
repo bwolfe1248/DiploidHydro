@@ -45,6 +45,20 @@ float voltageToPH(float voltage) {
   return 4.0 + (CONST_DEFAULT_PH_V4 - voltage) * (3.0 / (CONST_DEFAULT_PH_V4 - CONST_DEFAULT_PH_V7));
 }
 
+float voltageToPPM(float voltage, float tempC) {
+  // Temperature compensation factor
+  float compensationCoeff = 1.0 + (0.02 * (tempC - 25.0));
+  float compensatedVoltage = voltage / compensationCoeff;
+  
+// DFRobot Gravity TDS sensor formula
+// Source: https://wiki.dfrobot.com/Gravity__Analog_TDS_Sensor___Meter_For_Arduino_SKU__SEN0244
+  float ppm = (133.42 * pow(compensatedVoltage, 3) 
+            - 255.86 * pow(compensatedVoltage, 2) 
+            + 857.39 * compensatedVoltage) * 0.5;
+  
+  return ppm;
+}
+
 //allows for calibration updates
 void saveCalibration(float v7, float v4) {
   preferences.begin("diploidhydro", false);
@@ -175,12 +189,16 @@ void loop() {
 
   //Print to Serial
   float pH = voltageToPH(phVoltage);
+  float ppm = voltageToPPM(tdsVoltage, tempC);
+  float ec = ppm / 500.0;
 
   if (!plotMode) {
     Serial.println("────────────────────────────────────────");
     Serial.print("pH:            "); Serial.print(pH, 2);
     Serial.print("  ("); Serial.print(phVoltage, 3); Serial.println("V)");
     Serial.print("TDS Voltage:   "); Serial.print(tdsVoltage, 3); Serial.println("V");
+    Serial.print("PPM:           "); Serial.print(ppm, 0); Serial.println(" ppm");
+    Serial.print("EC:            "); Serial.print(ec, 2); Serial.println("mS/cm");
     Serial.print("Temperature:   "); Serial.print(tempC, 2); Serial.println("°C");
     Serial.println("── Level Sensors ────────────────────────");
     Serial.print("L1: "); Serial.print(level1 ? "DRY" : "WET");
