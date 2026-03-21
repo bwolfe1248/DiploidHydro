@@ -16,8 +16,8 @@
 #define LEVEL_1 16
 #define LEVEL_2 17
 #define LEVEL_3 25
-#define LEVEL_4 26
-#define LEVEL_5 27
+#define LEVEL_4 32         // remapped from 26 — GPIO26 reserved for W5500 RST
+#define LEVEL_5 33         // remapped from 27 — GPIO27 reserved for W5500 INT
 
 //pH Constants 
 const float CONST_DEFAULT_PH_V7 = 1.526;    // voltage at pH 7.0
