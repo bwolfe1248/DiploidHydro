@@ -179,6 +179,7 @@ void loop() {
   //Temperature Reading 
   tempSensor.requestTemperatures();
   float tempC = tempSensor.getTempCByIndex(0);
+  float tempF = (tempC * 9.0 / 5.0) + 32.0;
 
   //Level Sensor Readings 
   bool level1 = digitalRead(LEVEL_1);
@@ -198,8 +199,9 @@ void loop() {
     Serial.print("  ("); Serial.print(phVoltage, 3); Serial.println("V)");
     Serial.print("TDS Voltage:   "); Serial.print(tdsVoltage, 3); Serial.println("V");
     Serial.print("PPM:           "); Serial.print(ppm, 0); Serial.println(" ppm");
-    Serial.print("EC:            "); Serial.print(ec, 2); Serial.println("mS/cm");
+    Serial.print("EC:            "); Serial.print(ec, 2); Serial.println(" mS/cm");
     Serial.print("Temperature:   "); Serial.print(tempC, 2); Serial.println("°C");
+    Serial.print("Temperature:   "); Serial.print(tempF, 2); Serial.println("°F");
     Serial.println("── Level Sensors ────────────────────────");
     Serial.print("L1: "); Serial.print(level1 ? "DRY" : "WET");
     Serial.print("  L2: "); Serial.print(level2 ? "DRY" : "WET");
