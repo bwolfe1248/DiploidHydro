@@ -19,7 +19,7 @@
 #define MUX_S1  17         // TX2
 #define MUX_S2  25
 #define MUX_S3  32
-#define MUX_SIG 33         // Analog signal input from mux
+#define MUX_SIG 33
 
 //W5500 SPI
 #define W5500_CS   5
@@ -29,27 +29,31 @@
 #define W5500_RST  26
 #define W5500_INT  27
 
-//Network Configuration 
-//place holder
+//Network Configuration
+//Placeholder
+//byte MAC_ADDRESS[]  = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0x01 };
+//IPAddress STATIC_IP(192, 168, 1, 150);   // TODO: update for network
+//IPAddress SUBNET(255, 255, 255, 0);
+//IPAddress GATEWAY(192, 168, 1, 1);       // TODO: update for router
+//IPAddress DNS_SERVER(8, 8, 8, 8);
 
-//pH Calibration Constants 
-// These are the default fallback values if no calibration is stored
-const float CONST_DEFAULT_PH_V7    = 1.526;
-const float CONST_DEFAULT_PH_V4    = 2.042;
-const float CONST_DEFAULT_PH_SLOPE = 3.0 / (CONST_DEFAULT_PH_V4 - CONST_DEFAULT_PH_V7);
+//pH Calibration Constants
+//Default fallback values if no calibration is stored in flash
+const float CONST_DEFAULT_PH_V7 = 1.526;
+const float CONST_DEFAULT_PH_V4 = 2.042;
 
-//TDS Calibration 
+//TDS Calibration
 const float TDS_CAL_TEMP = 23.37;   // Temperature at calibration (°C)
 
-//Temperature Sensor Addresses 
+//Temperature Sensor Addresses
 // Update later with addresses from temp probes
-DeviceAddress TOTE1_TEMP_ADDR = { 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };  // TODO Update
-DeviceAddress TOTE2_TEMP_ADDR = { 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };  // TODO Update
-DeviceAddress TOTE3_TEMP_ADDR = { 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02 };  // TODO Update
-DeviceAddress TOTE4_TEMP_ADDR = { 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03 };  // TODO Update
-DeviceAddress TOTE5_TEMP_ADDR = { 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04 };  // TODO Update
+// DeviceAddress TOTE1_TEMP_ADDR = { 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };  // TODO update
+// DeviceAddress TOTE2_TEMP_ADDR = { 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };  // TODO update
+// DeviceAddress TOTE3_TEMP_ADDR = { 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02 };  // TODO update
+// DeviceAddress TOTE4_TEMP_ADDR = { 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03 };  // TODO update
+// DeviceAddress TOTE5_TEMP_ADDR = { 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04 };  // TODO update
 
-//Mux Channel Assignments 
+//Mux Channel Assignments
 // 3 IR level sensors per tote: LOW, MID, HIGH
 const int TOTE_LEVEL_CHANNELS[5][3] = {
   { 0,  1,  2},   // Tote 1
@@ -59,14 +63,15 @@ const int TOTE_LEVEL_CHANNELS[5][3] = {
   {12, 13, 14},   // Tote 5
 };
 
-//Runtime State 
-float calV7    = CONST_DEFAULT_PH_V7;
-float calV4    = CONST_DEFAULT_PH_V4;
-float calSlope = CONST_DEFAULT_PH_SLOPE;
-bool  plotMode = false;
+//Runtime State
+// Per-tote calibration arrays - index 0-4 maps to totes 1-5
+// Loaded from flash on boot, updated by cal7/cal4 commands
+float calV7[5];
+float calV4[5];
+bool  plotMode   = false;
 bool  ethernetOk = false;
 
-//Sensor Objects 
+//Sensor Objects
 Adafruit_ADS1115 adsTDS;    // 0x48 ADDR->GND  - TDS totes 1-4
 Adafruit_ADS1115 adsPH;     // 0x49 ADDR->VCC  - pH totes 1-4
 Adafruit_ADS1115 adsTote5;  // 0x4A ADDR->SDA  - pH AIN0, TDS AIN1 for tote 5
@@ -74,7 +79,7 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature tempSensors(&oneWire);
 Preferences preferences;
 
-//data struct 
+//Data Struct
 struct ToteData {
   float ph;
   float phVoltage;
@@ -83,164 +88,230 @@ struct ToteData {
   float tdsVoltage;
   float tempC;
   float tempF;
-  bool  levelLow;   // true = wet
+  bool  levelLow;
   bool  levelMid;
   bool  levelHigh;
 };
 
-//pH Conversion 
-// Uses two-point calibration (ph 7 buffer and ph 4 buffer)
-float voltageToPH(float voltage) {
-  return 4.0 + (CONST_DEFAULT_PH_V4 - voltage) * (3.0 / (CONST_DEFAULT_PH_V4 - CONST_DEFAULT_PH_V7));
+//pH Conversion
+// Two-point calibration using per-tote calV7 and calV4
+float voltageToPH(float voltage, int toteIndex) {
+  return 4.0 + (calV4[toteIndex] - voltage) * (3.0 / (calV4[toteIndex] - calV7[toteIndex]));
 }
 
-//TDS Conversion 
+//TDS Conversion
 // DFRobot cubic formula with temperature compensation
 // Source: https://wiki.dfrobot.com/Gravity__Analog_TDS_Sensor___Meter_For_Arduino_SKU__SEN0244
 float voltageToPPM(float voltage, float tempC) {
-  float compensationCoeff    = 1.0 + (0.02 * (tempC - 25.0));
-  float compensatedVoltage   = voltage / compensationCoeff;
+  float compensationCoeff  = 1.0 + (0.02 * (tempC - 25.0));
+  float compensatedVoltage = voltage / compensationCoeff;
   float ppm = (133.42 * pow(compensatedVoltage, 3)
              - 255.86 * pow(compensatedVoltage, 2)
              +  857.39 * compensatedVoltage) * 0.5;
   return ppm;
 }
 
-//Mux Channel Select 
-// Sets the 4 select lines on CD74HC4067 to route channel
+//Mux Channel Select
+// Binary encodes channel number onto 4 select lines
+// Channel 0-15, S0=bit0, S1=bit1, S2=bit2, S3=bit3
 void selectMuxChannel(int channel) {
   digitalWrite(MUX_S0, (channel >> 0) & 1);
   digitalWrite(MUX_S1, (channel >> 1) & 1);
   digitalWrite(MUX_S2, (channel >> 2) & 1);
   digitalWrite(MUX_S3, (channel >> 3) & 1);
-  delayMicroseconds(10);   // Brief settle before reading
+  delayMicroseconds(10);
 }
 
-//IR Level Sensor Read 
-// Routes mux to specified channel and reads signal
-// Returns true (WET) or false (DRY)
+//IR Level Sensor Read
+// Routes mux to channel, reads digital signal
+// Returns true=WET, false=DRY
 bool readLevelSensor(int muxChannel) {
   selectMuxChannel(muxChannel);
   bool raw = digitalRead(MUX_SIG);
-  return !raw;   // Invert: HIGH=dry -> false, LOW=wet -> true
+  return !raw;
 }
 
-//Calibration Save 
-// Writes pH calibration voltages to ESP32 flash via Preferences
-// Recalculates slope from new values
-void saveCalibration(float v7, float v4) {
+//Calibration Save
+// Writes one tote's pH calibration to flash
+void saveCalibration(int toteIndex, float v7, float v4) {
+  char keyV7[12], keyV4[12];
+  sprintf(keyV7, "phCalV7_%d", toteIndex);
+  sprintf(keyV4, "phCalV4_%d", toteIndex);
+
   preferences.begin("diploidhydro", false);
-  preferences.putFloat("phCalV7", v7);
-  preferences.putFloat("phCalV4", v4);
+  preferences.putFloat(keyV7, v7);
+  preferences.putFloat(keyV4, v4);
   preferences.end();
 
-  calV7    = v7;
-  calV4    = v4;
-  calSlope = (7.0 - 4.0) / (calV7 - calV4);
+  calV7[toteIndex] = v7;
+  calV4[toteIndex] = v4;
 
-  Serial.println("Calibration saved.");
-  Serial.print("  V7: ");    Serial.println(calV7, 3);
-  Serial.print("  V4: ");    Serial.println(calV4, 3);
-  Serial.print("  Slope: "); Serial.println(calSlope, 3);
+  Serial.print("Tote "); Serial.print(toteIndex + 1);
+  Serial.println(" calibration saved.");
+  Serial.print("  V7: "); Serial.println(calV7[toteIndex], 3);
+  Serial.print("  V4: "); Serial.println(calV4[toteIndex], 3);
 }
 
-//Serial Commands 
-//   cal7     - calibrate pH 7.0 buffer  --needs to be rewritten since I need to recalibrate for 5 totes after reworking from 1
-//   cal4     - calibrate pH 4.0 buffer  --needs to be rewritten since I need to recalibrate for 5 totes after reworking from 1
-//   resetcal - restore default calibration constants
-//   ploton   - enable Arduino Serial Plotter output format
-//   plotoff  - disable plot mode, return to human-readable format
-//   status   - print current calibration and network status
+//Calibration Load
+void loadAllCalibration() {
+  preferences.begin("diploidhydro", false);
+  for (int i = 0; i < 5; i++) {
+    char keyV7[12], keyV4[12];
+    sprintf(keyV7, "phCalV7_%d", i);
+    sprintf(keyV4, "phCalV4_%d", i);
+    calV7[i] = preferences.getFloat(keyV7, CONST_DEFAULT_PH_V7);
+    calV4[i] = preferences.getFloat(keyV4, CONST_DEFAULT_PH_V4);
+  }
+  preferences.end();
+}
 
+//pH Sensor Read by Tote
+float readPHVoltage(int toteIndex) {
+  int16_t raw;
+  if (toteIndex < 4) {
+    raw = adsPH.readADC_SingleEnded(toteIndex);
+    return adsPH.computeVolts(raw);
+  } else {
+    raw = adsTote5.readADC_SingleEnded(0);
+    return adsTote5.computeVolts(raw);
+  }
+}
+
+//TDS Sensor Read by Tote
+float readTDSVoltage(int toteIndex) {
+  int16_t raw;
+  if (toteIndex < 4) {
+    raw = adsTDS.readADC_SingleEnded(toteIndex);
+    return adsTDS.computeVolts(raw);
+  } else {
+    raw = adsTote5.readADC_SingleEnded(1);
+    return adsTote5.computeVolts(raw);
+  }
+}
+
+//Serial Commands
+// cal7 N     - calibrate pH 7.0 buffer on tote N (1-5)
+// cal4 N     - calibrate pH 4.0 buffer on tote N (1-5)
+// resetcal N - reset tote N to defaults
+// resetcal all - reset all totes to defaults
+// ploton     - enable Arduino Serial Plotter output format
+// plotoff    - disable plot mode, return to human-readable format
+// status     - print calibration values for all totes and network status
 void checkSerialCommands() {
   if (!Serial.available()) return;
 
   String cmd = Serial.readStringUntil('\n');
   cmd.trim();
 
-  if (cmd == "cal7") {
-    int16_t raw    = adsPH.readADC_SingleEnded(0);   // Tote 1 pH on ADS49 AIN0 -- TODO update to recalibrate for all totes, not just 1
-    float voltage  = adsPH.computeVolts(raw);
-    saveCalibration(voltage, calV4);
-    Serial.print("  pH 7.0 calibrated at: "); Serial.println(voltage, 3);
+  // cal7 N
+  if (cmd.startsWith("cal7")) {
+    int toteNum = cmd.substring(5).toInt();
+    if (toteNum < 1 || toteNum > 5) {
+      Serial.println("Usage: cal7 N  (N = tote number 1-5)");
+      return;
+    }
+    int toteIndex = toteNum - 1;
+    float voltage = readPHVoltage(toteIndex);
+    saveCalibration(toteIndex, voltage, calV4[toteIndex]);
+    Serial.print("  Tote "); Serial.print(toteNum);
+    Serial.print(" pH 7.0 calibrated at: "); Serial.println(voltage, 3);
   }
-  else if (cmd == "cal4") {
-    int16_t raw    = adsPH.readADC_SingleEnded(0);
-    float voltage  = adsPH.computeVolts(raw);
-    saveCalibration(calV7, voltage);
-    Serial.print("  pH 4.0 calibrated at: "); Serial.println(voltage, 3);
-  }
-  else if (cmd == "resetcal") {
-    preferences.begin("diploidhydro", false);
-    preferences.remove("phCalV7");
-    preferences.remove("phCalV4");
-    preferences.end();
 
-    calV7    = CONST_DEFAULT_PH_V7;
-    calV4    = CONST_DEFAULT_PH_V4;
-    calSlope = CONST_DEFAULT_PH_SLOPE;
-
-    Serial.println("Calibration reset to defaults.");
-    Serial.print("  V7: ");    Serial.println(calV7, 3);
-    Serial.print("  V4: ");    Serial.println(calV4, 3);
-    Serial.print("  Slope: "); Serial.println(calSlope, 3);
+  // cal4 N
+  else if (cmd.startsWith("cal4")) {
+    int toteNum = cmd.substring(5).toInt();
+    if (toteNum < 1 || toteNum > 5) {
+      Serial.println("Usage: cal4 N  (N = tote number 1-5)");
+      return;
+    }
+    int toteIndex = toteNum - 1;
+    float voltage = readPHVoltage(toteIndex);
+    saveCalibration(toteIndex, calV7[toteIndex], voltage);
+    Serial.print("  Tote "); Serial.print(toteNum);
+    Serial.print(" pH 4.0 calibrated at: "); Serial.println(voltage, 3);
   }
+
+  // resetcal N or resetcal all
+  else if (cmd.startsWith("resetcal")) {
+    String arg = cmd.substring(9);
+    arg.trim();
+
+    if (arg == "all") {
+      preferences.begin("diploidhydro", false);
+      for (int i = 0; i < 5; i++) {
+        char keyV7[12], keyV4[12];
+        sprintf(keyV7, "phCalV7_%d", i);
+        sprintf(keyV4, "phCalV4_%d", i);
+        preferences.remove(keyV7);
+        preferences.remove(keyV4);
+        calV7[i] = CONST_DEFAULT_PH_V7;
+        calV4[i] = CONST_DEFAULT_PH_V4;
+      }
+      preferences.end();
+      Serial.println("All totes reset to defaults.");
+    } else {
+      int toteNum = arg.toInt();
+      if (toteNum < 1 || toteNum > 5) {
+        Serial.println("Usage: resetcal N  or  resetcal all");
+        return;
+      }
+      int toteIndex = toteNum - 1;
+      char keyV7[12], keyV4[12];
+      sprintf(keyV7, "phCalV7_%d", toteIndex);
+      sprintf(keyV4, "phCalV4_%d", toteIndex);
+      preferences.begin("diploidhydro", false);
+      preferences.remove(keyV7);
+      preferences.remove(keyV4);
+      preferences.end();
+      calV7[toteIndex] = CONST_DEFAULT_PH_V7;
+      calV4[toteIndex] = CONST_DEFAULT_PH_V4;
+      Serial.print("Tote "); Serial.print(toteNum);
+      Serial.println(" reset to defaults.");
+    }
+  }
+
   else if (cmd == "ploton") {
     plotMode = true;
     Serial.println("Plot mode ON");
   }
+
   else if (cmd == "plotoff") {
     plotMode = false;
     Serial.println("Plot mode OFF");
   }
+
   else if (cmd == "status") {
-    Serial.println("── Status ───────────────────────────────");
-    Serial.print("  pH cal V7: ");    Serial.println(calV7, 3);
-    Serial.print("  pH cal V4: ");    Serial.println(calV4, 3);
-    Serial.print("  pH slope:  ");    Serial.println(calSlope, 3);
-    Serial.print("  Ethernet:  ");    Serial.println(ethernetOk ? "OK" : "FAILED");
+    Serial.println("── Calibration Status ───────────────────");
+    for (int i = 0; i < 5; i++) {
+      Serial.print("  Tote "); Serial.print(i + 1);
+      Serial.print("  V7="); Serial.print(calV7[i], 3);
+      Serial.print("  V4="); Serial.println(calV4[i], 3);
+    }
+    Serial.print("  Ethernet: "); Serial.println(ethernetOk ? "OK" : "FAILED");
   }
 }
 
-//Read One Tote 
+//Read One Tote
 // Reads all sensors for a given tote index (0-4)
+// Bundles into ToteData struct
 ToteData readTote(int toteIndex, DeviceAddress tempAddr) {
   ToteData d;
 
-  // pH voltage - ADS49 AIN0-3 for totes 0-3, ADS4A AIN0 for tote 4
-  int16_t phRaw;
-  if (toteIndex < 4) {
-    phRaw = adsPH.readADC_SingleEnded(toteIndex);
-    d.phVoltage = adsPH.computeVolts(phRaw);
-  } else if(toteIndex == 4) {
-    phRaw = adsTote5.readADC_SingleEnded(0);
-    d.phVoltage = adsTote5.computeVolts(phRaw);
-  }
-  d.ph = voltageToPH(d.phVoltage);
+  d.phVoltage = readPHVoltage(toteIndex);
+  d.ph        = voltageToPH(d.phVoltage, toteIndex);
 
-  // Temperature - individual probe called by unique address
   d.tempC = tempSensors.getTempC(tempAddr);
   d.tempF = (d.tempC * 9.0 / 5.0) + 32.0;
 
-  // TDS voltage - ADS48 AIN0-3 for totes 0-3, ADS4A AIN1 for tote 4
-  int16_t tdsRaw;
-  if (toteIndex < 4) {
-    tdsRaw = adsTDS.readADC_SingleEnded(toteIndex);
-    d.tdsVoltage = adsTDS.computeVolts(tdsRaw);
-  } else {
-    tdsRaw = adsTote5.readADC_SingleEnded(1);
-    d.tdsVoltage = adsTote5.computeVolts(tdsRaw);
-  }
-  d.ppm = voltageToPPM(d.tdsVoltage, d.tempC);
-  d.ec  = d.ppm / 500.0;
+  d.tdsVoltage = readTDSVoltage(toteIndex);
+  d.ppm        = voltageToPPM(d.tdsVoltage, d.tempC);
+  d.ec         = d.ppm / 500.0;
 
-  // Level sensors - 3 channels per tote from mux
   d.levelLow  = readLevelSensor(TOTE_LEVEL_CHANNELS[toteIndex][0]);
   d.levelMid  = readLevelSensor(TOTE_LEVEL_CHANNELS[toteIndex][1]);
   d.levelHigh = readLevelSensor(TOTE_LEVEL_CHANNELS[toteIndex][2]);
 
   return d;
-
 }
 
 //Print Tote Readings to console
@@ -259,7 +330,7 @@ void printTote(int toteNum, ToteData d) {
   Serial.print("  HIGH=");Serial.println(d.levelHigh ? "WET" : "DRY");
 }
 
-//Print All Totes (plot mode) 
+//Print All Totes (plot mode)
 void printPlotLine(ToteData totes[5]) {
   for (int i = 0; i < 5; i++) {
     Serial.print("T"); Serial.print(i+1); Serial.print("_pH:");
@@ -273,13 +344,12 @@ void printPlotLine(ToteData totes[5]) {
   Serial.println();
 }
 
-//Ethernet Init ─────────────────────────────────────────────
+//Ethernet Init
 // Initializes W5500 with static IP
 // Sets ethernetOk flag - checked before any network operations
 void initEthernet() {
   Serial.println("Initializing W5500 Ethernet...");
 
-  // Hardware reset W5500
   pinMode(W5500_RST, OUTPUT);
   digitalWrite(W5500_RST, LOW);
   delay(100);
@@ -288,7 +358,6 @@ void initEthernet() {
 
   Ethernet.init(W5500_CS);
   Ethernet.begin(MAC_ADDRESS, STATIC_IP, DNS_SERVER, GATEWAY, SUBNET);
-
   delay(1000);
 
   if (Ethernet.hardwareStatus() == EthernetNoHardware) {
@@ -304,24 +373,22 @@ void initEthernet() {
   }
 
   ethernetOk = true;
+  Serial.print("Ethernet OK. IP: ");
 }
- 
+
 void setup() {
   Serial.begin(9600);
   delay(1000);
   Serial.println("DiploidHydro Brain - Booting...");
   Serial.println("────────────────────────────────────────");
 
-  // Load pH calibration from flash
-  preferences.begin("diploidhydro", false);
-  calV7 = preferences.getFloat("phCalV7", CONST_DEFAULT_PH_V7);
-  calV4 = preferences.getFloat("phCalV4", CONST_DEFAULT_PH_V4);
-  preferences.end();
-  calSlope = (7.0 - 4.0) / (calV7 - calV4);
-
-  Serial.print("pH cal V7: "); Serial.println(calV7, 3);
-  Serial.print("pH cal V4: "); Serial.println(calV4, 3);
-  Serial.print("pH slope:  "); Serial.println(calSlope, 3);
+  // Load pH calibration for all 5 totes from flash
+  loadAllCalibration();
+  for (int i = 0; i < 5; i++) {
+    Serial.print("Tote "); Serial.print(i + 1);
+    Serial.print(" cal  V7="); Serial.print(calV7[i], 3);
+    Serial.print("  V4="); Serial.println(calV4[i], 3);
+  }
 
   //I2C
   Wire.begin(21, 22);
@@ -334,7 +401,7 @@ void setup() {
   }
   Serial.println("ADS1115 0x48 (TDS) initialized.");
 
-  //pH totes 1-4 
+  //pH totes 1-4
   adsPH.setGain(GAIN_ONE);
   if (!adsPH.begin(0x49)) {
     Serial.println("ERROR: ADS1115 0x49 (pH) not found. Check ADDR->VCC wiring.");
@@ -373,14 +440,15 @@ void setup() {
 
   Serial.println("────────────────────────────────────────");
   Serial.println("All systems initialized. Starting readings...");
+  Serial.println("Commands: cal7 N, cal4 N, resetcal N, resetcal all, ploton, plotoff, status");
   Serial.println("────────────────────────────────────────");
 }
 
-//Loop 
+//Loop
 void loop() {
   checkSerialCommands();
 
-  // Request temperature conversion from all sensors simultaneously to avoid multiple requests
+  // Request temperature conversion from all sensors simultaneously
   tempSensors.requestTemperatures();
 
   ToteData totes[5];
@@ -389,7 +457,6 @@ void loop() {
   totes[2] = readTote(2, TOTE3_TEMP_ADDR);
   totes[3] = readTote(3, TOTE4_TEMP_ADDR);
   totes[4] = readTote(4, TOTE5_TEMP_ADDR);
-//todo, add rest of the sensor data to output after this refactor
 
   if (plotMode) {
     printPlotLine(totes);
